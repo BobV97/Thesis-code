@@ -1,0 +1,1001 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+First, the ESG data is downloaded and prepared by removing missing values. Once this is done, the total ESG score is calculated by subtracting the ESG threaths from the opportunities.
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(magrittr)
+library(stargazer)
+library(tidymodels)
+library(NbClust)
+library(GGally)
+library(tidyverse)
+library(tidyr)
+library(fastDummies)
+library(dplyr)
+library(lubridate)
+library(forecast)
+library(writexl)
+library(readxl)
+library(writexl)
+library(ggpubr)
+library(themis)
+library(knitr)
+library(ranger)
+library(doParallel)
+library(vip)
+library(skimr)
+library(corrplot)
+library(ggridges)
+library(readr)
+library(glmnet)
+library(leaps)
+library(xgboost)
+
+
+
+
+
+Reprisk$name <- Reprisk$COMNAM 
+
+df <- merge(Thesis.ESG.data,dfShares, by = "name", all = TRUE)
+
+RepRisk.dataset[which(RepRisk.dataset$name == ""),]
+
+
+###################################
+# Data cleaning
+###################################
+
+Stockdata <- read.csv("~/Documents/MSC Business analytics & Management/Thesis/Thesis ESG data")
+
+Thesis.ESG.data$domicile <- NULL
+Thesis.ESG.data$ENV_str_F <- NULL
+Thesis.ESG.data$HUM_con_A <- NULL
+Thesis.ESG.data$HUM_con_B <- NULL
+Thesis.ESG.data$EMP_str_B <- NULL
+Thesis.ESG.data$HUM_str_A <- NULL
+df<- Thesis.ESG.data[,0:103]
+df <- df[,0:102]
+
+df2 <- na.omit(df) 
+
+Environmental <- df[complete.cases(df$ENV_str_num), ] 
+Environmental <- Environmental[complete.cases(df$ENV_con_num), ] 
+Community <- df[complete.cases(df$COM_str_num), ] 
+Community <- df[complete.cases(df$COM_con_num), ] 
+Governance <- df[complete.cases(df$CGOV_str_num), ] 
+Governance <- df[complete.cases(df$CGOV_con_num), ]
+
+
+Complete <- df[complete.cases(df$ENV_str_num), ]
+Complete <- Complete[complete.cases(Complete$ENV_con_num), ] 
+Complete <- Complete[complete.cases(Complete$COM_str_num), ] 
+Complete <- Complete[complete.cases(Complete$COM_con_num), ] 
+Complete <- Complete[complete.cases(Complete$CGOV_str_num), ] 
+Complete <- Complete[complete.cases(Complete$CGOV_con_num), ] 
+Complete <- Complete[complete.cases(Complete$DIV_str_num), ] 
+Complete <- Complete[complete.cases(Complete$DIV_con_num), ]
+Complete <- Complete[complete.cases(Complete$EMP_str_num), ] 
+Complete <- Complete[complete.cases(Complete$EMP_con_num), ]
+Complete <- Complete[complete.cases(Complete$HUM_con_num), ] 
+Complete <- Complete[complete.cases(Complete$HUM_str_num), ]
+Complete <- Complete[complete.cases(Complete$PRO_str_num), ] 
+Complete <- Complete[complete.cases(Complete$PRO_con_num), ]
+
+Complete$strength <- Complete$ENV_str_num + Complete$CGOV_str_num + Complete$COM_str_num + Complete$DIV_str_num + Complete$EMP_str_num + Complete$HUM_str_num + Complete$PRO_str_num 
+Complete$weakness <- Complete$ENV_con_num + Complete$COM_con_num + Complete$CGOV_con_num + Complete$DIV_con_num + Complete$EMP_con_num + Complete$HUM_con_num + Complete$PRO_con_num 
+Complete$diff <- Complete$strength - Complete$weakness
+
+Main <- Complete  [,c(1, 2, 3, 9, 16, 21, 26, 27, 33, 38, 46, 49, 54, 59, 63, 66, 73, 78, 86, 94, 95, 96)]
+```
+
+
+
+Exploring ESG data and plotting the distribution of ESG scores in a histogram.
+
+```{r}
+
+ggplot(Main, aes(x=strength)) + geom_histogram(binwidth = 1)
+ggplot(Main, aes(x=weakness)) + geom_histogram(binwidth = 1)
+ggplot(Main, aes(x=diff)) + geom_histogram(binwidth = 1)
+
+ggdensity(Complete$diff, 
+          main = "Density",
+          xlab = "ESG risk assessment")
+```
+
+
+
+Next, the stock data (CRSP) is imported. The format of the "date column is changed and the data is grouped so that returns are in stock per year. 
+
+
+```{r}
+Stockdata <- read.csv("~/Documents/MSC Business analytics & Management/Thesis/Stockdata")
+
+Stockdata$date2 <- as.Date(Stockdata$date, "%d/%m/%Y")
+
+Stockdata$RET <- as.numeric(as.character(Stockdata$RET))
+
+Stockdata$year <- year(Stockdata$date)
+
+Stockdata$year <- floor_date(Stockdata$date2, "year")
+
+
+df2 <- na.omit(Stockdata) 
+df2$year <- floor_date(df2$date2, "year")
+df2$year <- year(df2$date2)
+df3$year <- floor_date(df3$date2, "year")
+df3$year <- year(df3$date2)
+
+
+colnames(df2)[1] <- 'TICKER'
+df2 <- Stockdata %>%
+  group_by(Ticker, year) %>%
+  summarize(mean = mean(RET))
+colnames(df2)[1] <- 'Ticker'
+
+```
+
+
+Once the Stock dataset is prepared, the stockdata can be merged with the ESG data so that only the stock data for the firms in the ESG dataset is left. Also, an indicator of positivity is made in order to make the piechart showing the total ESG score distribution.
+
+
+```{r}
+Merged <- df2 %>% right_join(Main, by=c("Ticker","year"))
+
+Final <- Merged[,-c(19,20,22,23,24)]
+
+Final <- na.omit(Final)
+
+Final$total <- (Final$ENV_str_num - Final$ENV_con_num + Final$COM_str_num - Final$COM_con_num + Final$HUM_str_num - Final$HUM_con_num + Final$EMP_str_num - Final$EMP_con_num + Final$DIV_str_num - Final$DIV_con_num + Final$PRO_str_num - Final$PRO_con_num + Final$CGOV_str_num - Final$CGOV_con_num)
+Final$env <- Final$ENV_str_num - Final$ENV_con_num
+Final$com <- Final$COM_str_num - Final$COM_con_num
+Final$hum <- Final$HUM_str_num - Final$HUM_con_num
+Final$emp <- Final$EMP_str_num - Final$EMP_con_num
+Final$div <- Final$DIV_str_num - Final$DIV_con_num
+Final$pro <- Final$PRO_str_num - Final$PRO_con_num
+Final$cgov <- Final$CGOV_str_num - Final$CGOV_con_num
+Final$positive <- 0
+Final$positive[Final$total > 0] <- 1
+Final$negative <- 0
+Final$negative[Final$total < 0] <- 1
+
+```
+
+
+
+Now the financial data is imported, containing balance sheet and cash flow data.The financial data is prepared by removing missing data. The remaining dataset is merged with the ESG/stock dataset in order to create one full dataset containing all needed variables for this analysis.
+
+
+```{r}
+
+Stockdata <- read.csv("~/Documents/MSC Business analytics & Management/Thesis/Financial data")
+
+
+Financial.data$year <- Financial.data$fyear
+Financial.data$Ticker <- Financial.data$tic
+
+
+Financial <- Financial.data[,c(2,9,10,11,12,13,15,16,17,18,19,22,23,24,25,26,29,30,31,32,33,34,35,38,39,40,41,42,46,48,49,51,54,55,58,57)]
+
+Financial$date <- NULL
+
+Financial2 <- na.omit(Financial) 
+
+Total <- Final %>% left_join(Financial, by=c("Ticker","year"))
+
+Total$aco <- NULL
+Total$ao <- NULL
+Total$xi <- NULL
+
+Total2 <- na.omit(Total) 
+
+```
+
+
+
+
+The current dataset does not contain any information on industries. Therefore, this data is imported. The raw data uses industry codes, these need to be converted to their real names first. After this, the industry data in merged with the overall dataset. Then the industry data is turned into dummy variable which is suitable for analysis. After this, the names of the financial data are changed from abbreviations to full names in order to be better interpretable. Once these names have been set, the ratios are calculated, these will later on be used for the analysis.
+
+
+```{r}
+
+Stockdata <- read.csv("~/Documents/MSC Business analytics & Management/Thesis/Industries data")
+
+
+Industries.data$spcseccd[Industries.data$spcseccd == 970] <- "Basic Materials"
+Industries.data$spcseccd[Industries.data$spcseccd == 925] <- "Capital Goods"  
+Industries.data$spcseccd[Industries.data$spcseccd == 974] <- "Communication Services" 
+Industries.data$spcseccd[Industries.data$spcseccd == 976] <- "Consumer Cyclicals" 
+Industries.data$spcseccd[Industries.data$spcseccd == 978] <- "Consumer Staples"  
+Industries.data$spcseccd[Industries.data$spcseccd == 935] <- "Energy" 
+Industries.data$spcseccd[Industries.data$spcseccd == 800] <- "Financials" 
+Industries.data$spcseccd[Industries.data$spcseccd == 905] <- "Health Care" 
+Industries.data$spcseccd[Industries.data$spcseccd == 940] <- "Technology"  
+Industries.data$spcseccd[Industries.data$spcseccd == 600] <- "Transportation" 
+Industries.data$spcseccd[Industries.data$spcseccd == 700] <- "Utilities" 
+
+Industries.data$spcindcd <- NULL
+Industries.data <- Industries.data[,-c(1,2,4,5,6,7,9,10)]
+colnames(Industries.data)[1] <- "year"
+colnames(Industries.data)[2] <- "Ticker"
+
+PredictESG <- Total2 %>% left_join(Industries.data, by=c("Ticker","year"))
+PredictESG$spcseccd[is.na(PredictESG$spcseccd)] = 'Other'
+PredictESG <- dummy_cols(PredictESG, select_columns = c('loc', 'spcseccd'))
+PredictESG$spcseccd_Other <- 0
+PredictESG$loc_ZAF <- 0
+
+colnames(Total2)[31] <- "Current Assets"
+colnames(Total2)[32] <- "Accounts Payable"
+colnames(Total2)[33] <- "Acquisitions"
+colnames(Total2)[34] <- "Total Assets"
+colnames(Total2)[35] <- "CAPX"
+colnames(Total2)[36] <- "Common Equity"
+colnames(Total2)[37] <- "Cash"
+colnames(Total2)[38] <- "COGS"
+colnames(Total2)[39] <- "Long-Term Debt"
+colnames(Total2)[40] <- "Discontinued Operations"
+colnames(Total2)[41] <- "Depreciation & Amortization"
+colnames(Total2)[42] <- "Cash Dividends"
+colnames(Total2)[43] <- "Total Dividends"
+colnames(Total2)[44] <- "Goodwill"
+colnames(Total2)[45] <- "Gross Profit (Loss)"
+colnames(Total2)[46] <- "Invested Capital"
+colnames(Total2)[47] <- "Intangible Assets"
+colnames(Total2)[48] <- "Interest Paid"
+colnames(Total2)[49] <- "Inventory Decrease (Increase)"
+colnames(Total2)[50] <- "Total Inventories"
+colnames(Total2)[51] <- "Property, Plant & Equipment"
+colnames(Total2)[52] <- "Retained Earnings"
+colnames(Total2)[53] <- "Retained Earnings Restatement"
+colnames(Total2)[54] <- "Accounts Receivable"
+colnames(Total2)[55] <- "Total Revenue"
+colnames(Total2)[56] <- "Turnover"
+colnames(Total2)[57] <- "Stockholders' Equity"
+colnames(Total2)[58] <- "Special Items"
+
+colnames(Total2)[59] <- "Sale of Property, Plant & Equipment"
+Total2[60] <- NULL
+colnames(Total2)[61] <- "Leverage"
+colnames(Total2)[62] <- "CAPX Ratio"
+colnames(Total2)[63] <- "Asset Tangibility"
+colnames(Total2)[64] <- "Shares Outstanding"
+Total2[64] <- NULL
+colnames(Total2)[66] <- "Current Liabilities"
+colnames(Total2)[67] <- "Total Liabilities"
+colnames(Total2)[68] <- "Net Income"
+colnames(Total2)[69] <- "Working Capital"
+colnames(Total2)[70] <- "Profit Margin"
+
+Total2$`Long-Term Debt Ratio` <- Total2$`Long-Term Debt`/Total2$`Total Assets`
+Total2$`Current Ratio` <- Total2$`Current Assets`/Total2$`Current Liabilities`
+Total2$`Accounts Payable to Turnover Ratio` <- Total2$`Accounts Payable`/Total2$Turnover
+Total2$`Accounts Receivable to Turnover Ratio` <- Total2$`Accounts Receivable`/Total2$Turnover
+Total2$Size <- log(Total2$`Total Assets`)
+Total2$`Cash Ratio` <- Total2$Cash/Total2$`Current Liabilities`
+Total2$`COGS to Revenue ratio` <- Total2$COGS/Total2$Turnover
+Total2$`Depreciation/Amortization to Sales Ratio` <- Total2$`Depreciation & Amortization`/Total2$Turnover
+Total2$`Dividend Payout ratio` <- Total2$`Total Dividends` / Total2$`Net Income`
+Total2$`Goodwill Ratio` <- Total2$Goodwill /Total2$`Total Assets`
+Total2$`Gross Profit Margin` <- (Total2$Turnover - Total2$COGS) / Total2$Turnover
+Total2$`ROIC` <- (Total2$`Net Income`- Total2$`Total Dividends`) / Total2$`Invested Capital`
+Total2$`Intangibles to Turnover Ratio` <- Total2$`Intangible Assets` / Total2$Turnover
+Total2$`PPE to Turnover Ratio` <- Total2$Turnover / Total2$`Property, Plant & Equipment`
+Total2$`Retention Ratio` <- (Total2$`Net Income` - Total2$`Total Dividends`) - Total2$`Net Income`
+Total2$`Retained Earnings Restatement Ratio` <- Total2$`Retained Earnings Restatement` / Total2$`Retained Earnings`
+Total2$`Leverage Ratio` <- Total2$`Long-Term Debt`/Total2$`Stockholders' Equity`
+
+Total3 <- Total2[,-c(5,6:19,21:66)]
+
+
+Total3[Total3=="-Inf"] = NA
+Total3[Total3=="Inf"] = NA
+
+Returns <- as.data.frame(df2[,c(1,2,3)])
+Total3 <- Total3 %>% right_join(Returns, by=c("Ticker","year"))
+Total3$mean.x <- NULL
+Total3$RET <- Total3$mean.y*252
+Total3$mean.y <- NULL
+Total3 <- na.omit(Total3) 
+mean(Total3$RET)
+
+```
+
+
+
+Now, a subset is taken from the full dataset with all variables used for predicting the ESG scores. The data is also cleaned one more in order to use it for prediction. Finally, the Fama-French data is imported since this is needed for the return analysis later on. 
+
+
+```{r}
+PredictESG <- Total3[,c(1,2,4:25)]
+PredictESG <- dummy_cols(PredictESG, select_columns = c('loc', 'spcseccd'))
+PredictESG$spcseccd[is.na(PredictESG$spcseccd)] = 'Other'
+PredictESG$spcseccd_Other <- 0
+PredictESG$loc_ZAF <- 0
+PredictESG <- na.omit(PredictESG)
+PredictESG$spcseccd <- NULL
+PredictESG$loc <- NULL
+PredictESG <- PredictESG[,-c(3)]
+
+
+Fama <- read.csv("~/Downloads/F-F_Research_Data_Factors_daily.CSV")
+
+Fama$date <- as.Date(Fama$Date, "%Y%m%d")
+Fama$Date <- NULL
+Fama$year <- year(Fama$date)
+Fama2 <- Stockdata[,c(2,3,16,22)]
+colnames(Fama2)[1] <- "date2"
+colnames(Fama2)[4] <- "date"
+
+Fama <- Fama %>% left_join(Fama2, by=c("date"))
+Fama <- Fama[,-c(7)]
+```
+
+
+Now that all dataets are prepared, the machine learning models can be made. Let's start with splitting the data into a training and test set, and adding the Fama-French data to the dataset.
+
+
+```{r}
+Tot_split <- initial_split(PredictESG, prop = 0.7, strata = 'total')
+
+Tot_train <- training(Tot_split)
+Tot_test <- testing(Tot_split)
+
+Tot_train <- Tot_train %>% left_join(ESG, by=c("Ticker","year"))
+Tot_test <- Tot_test %>% left_join(ESG, by=c("Ticker", "year"))
+
+# Merging data with daily market data
+
+Fama$ID <- paste0(Fama$Ticker,'-', Fama$year)
+Tot_test$ID <- paste0(Tot_test$Ticker,'-', Tot_test$year)
+Tot_train$ID <- paste0(Tot_train$Ticker,'-', Tot_train$year)
+
+Fama_train <- Fama %>% right_join(Tot_train, by=c("ID"))
+Fama_train <- distinct(Fama_train)
+Fama_test <- Fama %>% right_join(Tot_test, by=c("ID"))
+Fama_test <- distinct(Fama_test)
+
+Tot_test$Ticker <- NULL
+Tot_test$year <- NULL
+```
+
+
+
+First, the Lasso Regression is made.
+
+
+
+```{r}
+LS_train <- Tot_train
+LS_test <- Tot_test
+
+LS_folds <- vfold_cv(LS_train, v = 10)
+
+LS_recipe <- recipe(total ~ ., data = LS_train)
+
+LS_recipe
+
+LS_train_baked <- LS_recipe %>% prep(LS_train) %>% bake(LS_train)
+
+LS_linreg <- linear_reg(penalty = tune(), mixture = 1) %>% 
+  set_engine("glmnet")
+
+LS_linreg %>% translate()
+
+LS_wf <- workflow() %>% 
+  add_recipe(LS_recipe) %>% 
+  add_model(LS_linreg)
+
+LS_wf
+
+grid_LS <- tibble(penalty = 10^(seq(from = -5, to = 1, length.out = 50)))
+
+LS_tune <- LS_wf %>% 
+  tune_grid(resamples = LS_folds, 
+            grid = grid_LS,
+            metrics = metric_set(rmse, rsq, mae))
+
+
+lasso_tune_metrics <- LS_tune %>% 
+  collect_metrics()
+lasso_tune_metrics %>% filter(.metric == "rsq") %>% 
+  ggplot(aes(x = penalty, y = mean, 
+             ymin = mean - std_err, ymax = mean + std_err)) + theme_bw() +
+  geom_linerange(alpha = 0.5) + 
+  geom_point() + 
+  scale_x_log10() + 
+  labs(y = "rsq", x = expression(lambda))
+
+LS_tune %>% show_best("rsq")
+
+lasso_1se_model <- select_by_one_std_err(LS_tune, metric = "rsq", desc(penalty))
+lasso_1se_model
+
+lasso_wf_tuned <- 
+  LS_wf %>% 
+  finalize_workflow(lasso_1se_model)
+lasso_wf_tuned
+
+lasso_last_fit <- lasso_wf_tuned %>% 
+  last_fit(LS_split, metrics = metric_set(rmse, mae, rsq))
+
+lasso_test_metrics <- lasso_last_fit %>% collect_metrics()
+lasso_test_metrics
+```
+
+
+Then, the gradient boosting is made.
+
+
+```{r}
+set.seed(912340)
+
+GB_train <- Tot_train
+GB_test <- Tot_test
+
+GB_folds <- GB_train %>% vfold_cv(v = 5, strata = total)
+
+xgb_recipe <- recipe(total ~ ., data = GB_train)
+
+xgb_model_tune <- 
+  boost_tree(trees = tune(), tree_depth = tune(), 
+             learn_rate = tune(), stop_iter = 500) %>%
+  set_mode("regression") %>%
+  set_engine("xgboost", importance = "permutation")
+
+xgb_tune_wf <- workflow() %>%
+  add_recipe(xgb_recipe) %>%
+  add_model(xgb_model_tune)
+xgb_tune_wf
+
+class_metrics <- metric_set(rsq,rmse,mae)
+
+registerDoParallel()
+
+set.seed(8504)
+grid_max_entropy(trees(range = c(0, 10000)), 
+                 learn_rate(range = c(-2, -1)), 
+                 tree_depth(), size = 20)
+
+xgb_grid <- expand.grid(trees = 500 * 1:20, 
+                        learn_rate = c(0.01), 
+                        tree_depth = 5:9)
+
+xgb_tune_res <- tune_grid(
+  xgb_tune_wf,
+  resamples = GB_folds,
+  grid = xgb_grid,
+  metrics = class_metrics
+)
+
+
+xgb_tune_metrics <- xgb_tune_res %>%
+  collect_metrics()
+xgb_tune_metrics
+
+
+xgb_tune_metrics %>% 
+  filter(.metric == "rsq") %>% 
+  ggplot(aes(x = trees, y = mean, 
+             colour = factor(tree_depth))) +
+  geom_path() +
+  labs(y = "R-squared") + 
+  facet_wrap(~ learn_rate) + theme_bw()
+
+
+xgb_tune_metrics %>% 
+  filter(.metric == "mae") %>% 
+  ggplot(aes(x = trees, y = mean, 
+             colour = factor(tree_depth))) +
+  geom_path() +
+  labs(y = "Mean absolute error") + 
+  facet_wrap(~ learn_rate) + theme_bw()
+
+
+xgb_tune_metrics %>% 
+  filter(.metric == "mae") %>% 
+  ggplot(aes(x = trees, y = mean, 
+             colour = factor(tree_depth))) +
+  geom_path() +
+  labs(y = "Mean absolute error") + 
+  facet_wrap(~ learn_rate) + theme_bw()
+
+
+xgb_tune_metrics %>% 
+  filter(.metric == "rmse") %>% 
+  ggplot(aes(x = trees, y = mean, 
+             colour = factor(tree_depth))) +
+  geom_path() +
+  labs(y = "Root-mean squared error") + 
+  facet_wrap(~ learn_rate) + theme_bw()
+
+
+xgb_tune_res %>% 
+  collect_metrics() %>%
+  filter(.metric %in% c("rsq", "rmse", "mae")) %>%
+  ggplot(aes(x = trees, y = mean, colour = .metric)) +
+  geom_path() +
+  facet_wrap(learn_rate ~ tree_depth) + theme_bw()A
+
+
+xgb_tune_metrics %>% 
+  filter(tree_depth == 7, learn_rate == 0.01, trees >= 5000 & trees <= 10000) %>% 
+  select(trees:learn_rate, .metric, mean) %>%
+    pivot_wider(trees:learn_rate,
+                names_from = .metric,
+                values_from = mean)
+
+
+
+xgb_best <- xgb_tune_metrics %>% 
+  filter(.metric == "rsq", tree_depth == 7, learn_rate == 0.01, trees == 10000)
+xgb_final_wf <- finalize_workflow(xgb_tune_wf, xgb_best)
+xgb_final_wf
+
+
+xgb_final_fit <- xgb_final_wf %>%
+  last_fit(GB_split, metrics = class_metrics)
+
+
+xgb_final_fit %>%
+  collect_metrics()
+```
+
+
+
+Finally, the random forest model is made. This model is also used to make the prediction that will be used for the return analysis.
+
+
+
+```{r}
+
+set.seed(28296)
+
+cv_folds <- Tot_train %>% vfold_cv(v = 3, strata = total)
+
+recipe_Tot <- recipe(total ~ ., data = Tot_train) %>% update_role(Ticker, new_role = "metadata")
+
+model_tune <- rand_forest(mtry = tune(), trees = 1000) %>%
+  set_mode("regression") %>% set_engine("ranger", importance = "permutation")
+
+tune_wf <- workflow() %>%
+  add_recipe(recipe_Tot) %>%
+  add_model(model_tune)
+
+Tot_metrics <- metric_set(rsq,rmse,mae)
+
+registerDoParallel()
+
+set.seed(26532) 
+
+tune_res <- tune_grid(
+  tune_wf,
+  resamples = cv_folds,
+  grid = tibble(mtry = 2:35),
+  metrics = Tot_metrics
+)
+
+tune_res %>%
+  collect_metrics()
+
+tune_res %>%
+  collect_metrics() %>%
+  filter(.metric %in% c("rsq", "rmse", "mae")) %>%
+  ggplot(aes(x = mtry, y = mean, ymin = mean - std_err, ymax = mean + std_err, 
+             colour = .metric)) +
+  geom_errorbar() + 
+  geom_line() +
+  geom_point() +
+  facet_grid(.metric ~ ., scales = "free_y") + theme_bw() 
+
+best_rsq <- select_best(tune_res, "rsq")
+fin_wf <- finalize_workflow(tune_wf, best_rsq)
+
+set.seed(26283)
+
+Predict <- fin_wf %>%
+  last_fit(Tot_split, metrics = Tot_metrics)
+
+Predict %>%
+  collect_metrics()
+
+vi_fit <- tune_wf %>% fit(data = Tot_train)
+
+vi_fit %>% extract_fit_parsnip() %>% vi()
+
+vi_fit %>% extract_fit_parsnip() %>% vip(geom = "point", num_features = 20) + theme_bw()
+
+predictions <- predict(Predict, Merge_test)
+```
+
+
+
+
+Now we can start with the return analysis, we do this by splitting the dataset into portfolios and merging the predictions with their stock data.
+
+
+```{r}
+
+# Merge the predictions dataset with daily return data
+colnames(Fama)[7] <- "Ticker"
+Fama_test <- Fama %>% right_join(predictions, by=c("Ticker", "year"))
+Fama_test <- distinct(Fama_test)
+#Fama_test[Fama_test == ""] <- NA 
+#Fama_test$RET <- as.numeric(as.character(Fama_test$RET))
+Fama_test <- na.omit(Fama_test)
+
+#Create portfolio variable 
+Fama_test$portfolio_pred <- 0
+Fama_test$portfolio_pred[Fama_test$Predicted < -2] <- 1
+Fama_test$portfolio_pred[Fama_test$Predicted == -2] <- 2
+Fama_test$portfolio_pred[Fama_test$Predicted == -1] <- 3
+Fama_test$portfolio_pred[Fama_test$Predicted == 0] <- 4
+Fama_test$portfolio_pred[Fama_test$Predicted == 1] <- 5
+Fama_test$portfolio_pred[Fama_test$Predicted == 2] <- 6
+Fama_test$portfolio_pred[Fama_test$Predicted > 2] <- 7
+
+```
+
+
+
+Now we can perform the Fama-French analysis, let's start with the predicted ESG scores. First, the data is grouped to be per portfolio per year. After this, we create a separate dataframe for each predicted portfolio. 
+
+
+```{r}
+
+################################################
+# Portfolio creation - ESG unknown
+################################################
+
+RetDay_test <- Fama_test %>%
+  group_by(portfolio_pred, date) %>%
+  summarize(RET = mean(RET))
+
+SMBDay_test <- Fama_test %>%
+  group_by(portfolio_pred, date) %>%
+  summarize(SMB = mean(SMB))
+
+HMLDay_test <- Fama_test %>%
+  group_by(portfolio_pred, date) %>%
+  summarize(HML = mean(HML))
+
+MKTDay_test <- Fama_test %>%
+  group_by(portfolio_pred, date) %>%
+  summarize(MKT = mean(Mkt.RF))
+
+RFDay_test <- Fama_test %>%
+  group_by(portfolio_pred, date) %>%
+  summarize(RF = mean(RF))
+
+RetDay_test <- RetDay_test %>% left_join(SMBDay_test, by=c("portfolio_pred","date"))
+RetDay_test <- RetDay_test %>% left_join(HMLDay_test, by=c("portfolio_pred","date"))
+RetDay_test <- RetDay_test %>% left_join(MKTDay_test, by=c("portfolio_pred","date"))
+RetDay_test <- RetDay_test %>% left_join(RFDay_test, by=c("portfolio_pred","date"))
+RetDay_test$SMB <- RetDay_test$SMB/100
+RetDay_test$HML <- RetDay_test$HML/100
+RetDay_test$MKT <- RetDay_test$MKT/100
+RetDay_test$RF <- RetDay_test$RF/100
+RetDay_test$'Excess Returns' <- RetDay_test$RET - RetDay_test$RF
+
+
+P1_test<- RetDay_test[RetDay_test$portfolio_pred == 1,]
+P2_test <- RetDay_test[RetDay_test$portfolio_pred == 2,]
+P3_test <- RetDay_test[RetDay_test$portfolio_pred == 3,] 
+P4_test <- RetDay_test[RetDay_test$portfolio_pred == 4,]
+P5_test <- RetDay_test[RetDay_test$portfolio_pred == 5,]
+P6_test <- RetDay_test[RetDay_test$portfolio_pred == 6,] 
+P7_test <- RetDay_test[RetDay_test$portfolio_pred == 7,]
+
+
+```
+
+
+
+Now we can do the same for the real ESG scores
+
+
+
+```{r}
+################################################
+# Portfolio creation - ESG known
+################################################
+
+#Do the same for the actual 
+
+colnames(Fama)[6] <- "Ticker"
+Fama_train <- Fama %>% right_join(Tot_train, by=c("Ticker", "year"))
+Fama_train <- distinct(Fama_train)
+Fama_train <- Fama_train[,c(1:9)]
+
+#Create portfolio variable 
+
+
+Fama_train$portfolio <- 0
+Fama_train$portfolio[Fama_train$total < -2] <- 1
+Fama_train$portfolio[Fama_train$total == -2] <- 2
+Fama_train$portfolio[Fama_train$total == -1] <- 3
+Fama_train$portfolio[Fama_train$total == 0] <- 4
+Fama_train$portfolio[Fama_train$total == 1] <- 5
+Fama_train$portfolio[Fama_train$total == 2] <- 6
+Fama_train$portfolio[Fama_train$total > 2] <- 7
+
+
+# Create a dataset containing the returns per portfolio per day
+
+Fama_train$RET <- as.numeric(as.character(Fama_train$RET))
+Fama_train <- na.omit(Fama_train)
+
+RetDay <- Fama_train %>%
+  group_by(portfolio, date) %>%
+  summarize(RET = mean(RET))
+
+SMBDay <- Fama_train %>%
+  group_by(portfolio, date) %>%
+  summarize(SMB = mean(SMB))
+
+HMLDay <- Fama_train %>%
+  group_by(portfolio, date) %>%
+  summarize(HML = mean(HML))
+
+MKTDay <- Fama_train %>%
+  group_by(portfolio, date) %>%
+  summarize(MKT = mean(Mkt.RF))
+
+RFDay <- Fama_train %>%
+  group_by(portfolio, date) %>%
+  summarize(RF = mean(RF))
+
+RetDay <- RetDay %>% left_join(SMBDay, by=c("portfolio","date"))
+RetDay <- RetDay %>% left_join(HMLDay, by=c("portfolio","date"))
+RetDay <- RetDay %>% left_join(MKTDay, by=c("portfolio","date"))
+RetDay <- RetDay %>% left_join(RFDay, by=c("portfolio","date"))
+RetDay$SMB <- RetDay$SMB/100
+RetDay$HML <- RetDay$HML/100
+RetDay$MKT <- RetDay$MKT/100
+RetDay$RF <- RetDay$RF/100
+RetDay$'Excess Returns' <- RetDay$RET - RetDay$RF
+
+
+P1 <- RetDay[RetDay$portfolio == 1,]
+P2 <- RetDay[RetDay$portfolio == 2,]
+P3 <- RetDay[RetDay$portfolio == 3,] 
+P4 <- RetDay[RetDay$portfolio == 4,]
+P5 <- RetDay[RetDay$portfolio == 5,]
+P6 <- RetDay[RetDay$portfolio == 6,] 
+P7 <- RetDay[RetDay$portfolio == 7,]
+Ppos <- RetDay[RetDay$portfolio > 4,]
+Pneu <- RetDay[RetDay$portfolio == 4,]
+Pneg <- RetDay[RetDay$portfolio < 4,]
+
+```
+
+
+
+
+Now we can look at the effect of combining the predicted and observed ESG scores, so lets create the portfolio dataset for those as well.
+
+
+```{r}
+########################################################################
+# Joining train and test dataset for overall return calculation
+########################################################################
+
+colnames(Fama_test)[9] <- "total"
+colnames(Fama_test)[10] <- "portfolio"
+
+Full <- rbind(Fama_test, Fama_train)
+
+Full$portfolio <- 0
+Full$portfolio[Full$total < -2] <- 1
+Full$portfolio[Full$total == -2] <- 2
+Full$portfolio[Full$total == -1] <- 3
+Full$portfolio[Full$total == 0] <- 4
+Full$portfolio[Full$total == 1] <- 5
+Full$portfolio[Full$total == 2] <- 6
+Full$portfolio[Full$total > 2] <- 7
+
+
+# Create a dataset containing the returns per portfolio per day
+
+Full$RET <- as.numeric(as.character(Full$RET))
+Full <- na.omit(Full)
+
+RetDayFull <- Full %>%
+  group_by(portfolio, date) %>%
+  summarize(RET = mean(RET))
+
+SMBDayFull <- Full %>%
+  group_by(portfolio, date) %>%
+  summarize(SMB = mean(SMB))
+
+HMLDayFull <- Full %>%
+  group_by(portfolio, date) %>%
+  summarize(HML = mean(HML))
+
+MKTDayFull <- Full %>%
+  group_by(portfolio, date) %>%
+  summarize(MKT = mean(Mkt.RF))
+
+RFDayFull <- Full %>%
+  group_by(portfolio, date) %>%
+  summarize(RF = mean(RF))
+
+RetDayFull <- RetDayFull %>% left_join(SMBDayFull, by=c("portfolio","date"))
+RetDayFull <- RetDayFull %>% left_join(HMLDayFull, by=c("portfolio","date"))
+RetDayFull <- RetDayFull %>% left_join(MKTDayFull, by=c("portfolio","date"))
+RetDayFull <- RetDayFull %>% left_join(RFDayFull, by=c("portfolio","date"))
+RetDayFull$SMB <- RetDayFull$SMB/100
+RetDayFull$HML <- RetDayFull$HML/100
+RetDayFull$MKT <- RetDayFull$MKT/100
+RetDayFull$RF <- RetDayFull$RF/100
+RetDayFull$'Excess Returns' <- RetDayFull$RET - RetDayFull$RF
+
+P1Full <- RetDayFull[RetDayFull$portfolio == 1,]
+P2Full <- RetDayFull[RetDayFull$portfolio == 2,]
+P3Full <- RetDayFull[RetDayFull$portfolio == 3,] 
+P4Full <- RetDayFull[RetDayFull$portfolio == 4,]
+P5Full <- RetDayFull[RetDayFull$portfolio == 5,]
+P6Full <- RetDayFull[RetDayFull$portfolio == 6,] 
+P7Full <- RetDayFull[RetDayFull$portfolio == 7,]
+PposFull <- RetDayFull[RetDayFull$portfolio > 4,]
+PneuFull <- RetDayFull[RetDayFull$portfolio == 4,]
+PnegFull <- RetDayFull[RetDayFull$portfolio < 4,]
+
+
+```
+
+
+
+
+
+Now that the portfolios are made based on predicted, real and combined ESG scores, we can run the Fama-French analysis and plot the returns.
+
+
+
+```{r}
+########################################################################
+# Time-series analysis
+########################################################################
+
+
+# Training set Fama-French model
+
+MDL1 <- lm(`Excess Returns` ~ MKT + SMB + HML, data = P1)
+MDL2 <- lm(`Excess Returns` ~ MKT + SMB + HML, data = P2)
+MDL3 <- lm(`Excess Returns` ~ MKT + SMB + HML, data = P3)
+MDL4 <- lm(`Excess Returns` ~ MKT + SMB + HML, data = P4)
+MDL5 <- lm(`Excess Returns` ~ MKT + SMB + HML, data = P5)
+MDL6 <- lm(`Excess Returns` ~ MKT + SMB + HML, data = P6)
+MDL7 <- lm(`Excess Returns` ~ MKT + SMB + HML, data = P7)
+
+stargazer(MDL1,MDL2,MDL3,MDL4,MDL5,MDL6,MDL7, type = "text")
+
+
+MDLpos <- lm(`Excess Returns` ~ MKT + SMB + HML, data = Ppos)
+MDLneu <- lm(`Excess Returns` ~ MKT + SMB + HML, data = Pneu)
+MDLneg <- lm(`Excess Returns` ~ MKT + SMB + HML, data = Pneg)
+
+stargazer(MDLpos, MDLneu, MDLneg, type = "text")
+
+
+
+# test set Fama-French model with predicted ESG scores
+
+MDL_1 <- lm(`Excess Returns` ~ MKT + SMB + HML, data = P1_test)
+MDL_2 <- lm(`Excess Returns` ~ MKT + SMB + HML, data = P2_test)
+MDL_3 <- lm(`Excess Returns` ~ MKT + SMB + HML, data = P3_test)
+MDL_4 <- lm(`Excess Returns` ~ MKT + SMB + HML, data = P4_test)
+MDL_5 <- lm(`Excess Returns` ~ MKT + SMB + HML, data = P5_test)
+MDL_6 <- lm(`Excess Returns` ~ MKT + SMB + HML, data = P6_test)
+MDL_7 <- lm(`Excess Returns` ~ MKT + SMB + HML, data = P7_test)
+
+stargazer(MDL_1,MDL_2,MDL_3,MDL_4,MDL_5,MDL_6,MDL_7, type = "text")
+
+
+MDLpos_test <- lm(`Excess Returns` ~ MKT + SMB + HML, data = Ppos_test)
+MDLneu_test <- lm(`Excess Returns` ~ MKT + SMB + HML, data = Pneu_test)
+MDLneg_test <- lm(`Excess Returns` ~ MKT + SMB + HML, data = Pneg_test)
+
+stargazer(MDLpos_test, MDLneu_test, MDLneg_test, type = "text")
+
+
+# Combined set Fama-French model with actual and predicted ESG scores
+
+MDL1Full <- lm(`Excess Returns` ~ MKT + SMB + HML, data = P1Full)
+MDL2Full <- lm(`Excess Returns` ~ MKT + SMB + HML, data = P2Full)
+MDL3Full <- lm(`Excess Returns` ~ MKT + SMB + HML, data = P3Full)
+MDL4Full <- lm(`Excess Returns` ~ MKT + SMB + HML, data = P4Full)
+MDL5Full <- lm(`Excess Returns` ~ MKT + SMB + HML, data = P5Full)
+MDL6Full <- lm(`Excess Returns` ~ MKT + SMB + HML, data = P6Full)
+MDL7Full <- lm(`Excess Returns` ~ MKT + SMB + HML, data = P7Full)
+
+stargazer(MDL1Full,MDL2Full,MDL3Full,MDL4Full,MDL5Full,MDL6Full,MDL7Full, type = "text")
+
+
+MDLposFull <- lm(`Excess Returns` ~ MKT + SMB + HML, data = PposFull)
+MDLneuFull <- lm(`Excess Returns` ~ MKT + SMB + HML, data = PneuFull)
+MDLnegFull <- lm(`Excess Returns` ~ MKT + SMB + HML, data = PnegFull)
+
+stargazer(MDLposFull, MDLneuFull, MDLnegFull, type = "text")
+
+```
+
+
+
+
+Finally, in this last section the plots and tables used in the paper are added.
+
+
+```{r}
+
+# Number of trading days per portfolio
+
+Stat <- Fama_train %>% group_by(portfolio) %>% summarise(count = n())
+Stat2 <- Fama_test %>% group_by(portfolio) %>% summarise(count = n())
+Stat3 <- Full %>% group_by(portfolio) %>% summarise(count = n())
+
+
+# Descriptive statistics of Fama-French variables
+
+DesRet <- Full %>%  group_by(date) %>%
+  summarize(RET = mean(RET))
+
+DesMKT <- Full %>%  group_by(date) %>%
+  summarize(MKT = mean(Mkt.RF))
+
+DesSML <- Full %>%  group_by(date) %>%
+  summarize(SML = mean(SML))
+
+summary(DesRet)
+summary(DesMKT$MKT/100)
+
+sd(DesRet$RET)
+sd(DesMKT$MKT/100)
+
+# Descriptive statistics of predicted and observed ESG ratings
+
+DesESG <- Fama_test %>%  group_by(Ticker, year) %>%
+  summarize(total = mean(total))
+
+summary(DesESG$total)
+sd(DesESG$total)
+
+summary(Total3$total)
+sd(Total3$total)
+
+
+
+# Industry Piechart
+
+pie <- Total2[72]
+pie(table(pie))
+
+
+# Histogram of ESG scores and returns
+
+ggplot(Total, aes(x=total)) + geom_histogram(binwidth = 1,color = 'white', aes(y= (..count..)/sum(..count..))) + labs(y='Percentage', x='ESG score') + theme_bw()
+ggplot(Fama, aes(x=RET)) + geom_histogram(binwidth = 0.003) + xlim(-0.15,0.15) + theme_bw()
+
+
+
+# Piechart of ESG positivity
+
+pie2 <- PredictPos[70]
+pie(table(pie2))
+
+
+```
+
+
+
+
+
+
+
+
